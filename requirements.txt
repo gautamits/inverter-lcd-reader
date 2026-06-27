@@ -20,6 +20,7 @@ opencv-python-headless==4.13.0.92
 OpenEXR==3.4.12
 packaging==26.2
 paho-mqtt==1.6.1
+pandas==2.3.2
 picamera2==0.3.36
 pidng==4.0.9
 piexif==1.1.3

@@ -1,67 +1,7 @@
-import time
 import cv2
 import numpy as np
-from picamera2 import Picamera2
 import pytesseract
-WIDTH=1280
-HEIGHT=720
-CONTOUR_OFFSET=10
-
-picam = Picamera2()
-picam.configure(picam.create_still_configuration(main={"format": "RGB888", "size": (WIDTH, HEIGHT)}))
-picam.start()
-    
-print("Camera warming up...")
-time.sleep(2) 
-
-def get_contour(edged):
-    contours, _ = cv2.findContours(edged.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    rect_count = 0
-
-    # 4. Filter contours to find right-angle rectangles
-    right_contours=[]
-    for contour in contours:
-        # Ignore very small artifacts/noise
-        if cv2.contourArea(contour) < 500:
-            continue
-
-        # Calculate perimeter and approximate the contour shape
-        perimeter = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, 0.04 * perimeter, True)
-        # A rectangle must have exactly 4 vertices
-        if len(approx) == 4:
-            # Verify right angles by checking the aspect ratio stability or 
-            # leveraging bounding box alignment versus shape area.
-            x, y, w, h = cv2.boundingRect(approx)
-            rect_area = w * h
-            contour_area = cv2.contourArea(approx)
-
-            # If the shape closely matches its bounding box, it's a right-angled rectangle
-            if abs(1.0 - (contour_area / rect_area)) < 0.15:
-                # Draw the contour on the original BGR image in Red (B=0, G=0, R=255)
-                # Thickness is set to 3 pixels
-                # cv2.drawContours(img_bgr, [approx], -1, (0, 0, 255), 3)
-                right_contours.append(contour)
-                rect_count += 1
-    print(f"Found {rect_count} right-angled rectangles.")
-    if right_contours:
-        largest_contour = max(right_contours, key=cv2.contourArea)
-        return largest_contour
-    return None
-
-def get_edged():
-    # Capture image directly into a NumPy array
-    print("Capturing image...")
-    image = picam.capture_array()
-
-    # Convert RGB array from PiCamera2 to OpenCV's native BGR format
-    img_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-    # 2. Pre-process the image for contour detection
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edged = cv2.Canny(blurred, 50, 150)
-    return edged, gray, blurred, img_bgr
+from capture_all import capture_all
 
 def k_means_clustering(gray, k=100):
     # Reshape the image to a 2D array of pixels and 1 color value (grayscale)
@@ -94,11 +34,6 @@ def k_means_clustering_color(img, k=5):
     # Map counts to their respective cluster center colors
     dominant_groups = zip(centers, counts)
     return dominant_groups
-def capture_cropped(contour):
-    edged, gray, blurred, img_bgr = get_edged()
-    x, y, w, h = cv2.boundingRect(contour)
-    cropped_image = img_bgr[y+CONTOUR_OFFSET:y+h-CONTOUR_OFFSET, x+CONTOUR_OFFSET:x+w-CONTOUR_OFFSET]
-    return cropped_image
 
 def get_text(img):
     custom_config = r'--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789vA.'
@@ -154,37 +89,13 @@ def manage_histogram(gray):
     result_img[mask] = 0
     return result_img
 
-def capture_all(img_count, time_gap):
-    edged, gray, blurred, img_bgr = get_edged()
-    largest_contour = get_contour(edged)
-    if largest_contour is None:
-        print("No right-angled rectangles found.")
-        cv2.imwrite('error.jpg', img_bgr)
-        exit()
-    cropped=capture_cropped(largest_contour)
-    gray, thresh, blurred, segmented_image = get_gray_thresh(cropped)
-    # sub = manage_histogram(gray)
-    [gray_3ch, thresh_3ch, blurred_3ch, segmented_3ch] = list(map(lambda x: cv2.cvtColor(x, cv2.COLOR_GRAY2BGR), [gray, thresh, blurred, segmented_image]))
-    print(get_text(thresh))
-    result=cv2.vconcat([cropped, gray_3ch, blurred_3ch, segmented_3ch, thresh_3ch])
-    time.sleep(time_gap)
-    for index, value in enumerate(range(img_count), start=0):
-        try:
-            cropped = capture_cropped(largest_contour)
-            gray, thresh, blurred, segmented_image = get_gray_thresh(cropped)
-            # sub = manage_histogram(gray)
-            print(get_text(thresh))
-            [gray_3ch, thresh_3ch, blurred_3ch, segmented_3ch] = list(map(lambda x: cv2.cvtColor(x, cv2.COLOR_GRAY2BGR), [gray, thresh, blurred, segmented_image]))
-            result=cv2.hconcat([result, cv2.vconcat([cropped, gray_3ch, blurred_3ch, segmented_3ch, thresh_3ch])])
-        except Exception as E:
-            print(f"Error capturing image {index}: {E}")
-            pass
-        time.sleep(time_gap)
-    return result
+def read_all():
+    sprite = capture_all(2, 3)
+    gray, thresh, blurred, segmented_image = get_gray_thresh(sprite)
+    return cv2.vconcat([sprite, cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR), cv2.cvtColor(blurred, cv2.COLOR_GRAY2BGR), cv2.cvtColor(segmented_image, cv2.COLOR_GRAY2BGR), cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)])
 
 if __name__ == "__main__":
-    sprite=capture_all(2, 3)
-    picam.stop()
+    sprite=read_all()
     # 5. Save the processed output image
     output_path = "detected_rectangles.jpg"
     cv2.imwrite(output_path, sprite)
